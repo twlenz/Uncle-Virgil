@@ -59,3 +59,29 @@ def test_microphones_can_be_listed():
     from uncle_virgil.recorder import Recorder
 
     assert isinstance(Recorder.input_devices(), list)  # a CI machine may have none; this must not crash
+
+
+def test_dictation_shortcut_fires_when_the_keys_are_pressed():
+    import ctypes
+    import threading
+
+    from uncle_virgil.hotkey import Hotkey
+
+    pressed = threading.Event()
+    combo, keys = "Ctrl+Alt+Shift+F9", [0x11, 0x12, 0x10, 0x78]  # unlikely to be taken on any machine
+    shortcut = Hotkey(combo, pressed.set)
+    assert shortcut.start(), shortcut.error
+    try:
+        user32 = ctypes.windll.user32
+        for k in keys:
+            user32.keybd_event(k, 0, 0, 0)
+        for k in reversed(keys):
+            user32.keybd_event(k, 0, 2, 0)  # key up
+        assert pressed.wait(5), "the shortcut did not fire"
+        other = Hotkey(combo, lambda: None)  # a second program asking for the same keys
+        assert not other.start() and "already used" in other.error
+    finally:
+        shortcut.stop()
+    again = Hotkey(combo, lambda: None)
+    assert again.start(), "the shortcut was not released when stopped"
+    again.stop()

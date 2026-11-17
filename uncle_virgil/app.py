@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
-from . import llm
+from . import hotkey, llm
 from .config import get_secret, load_settings, save_settings
 from .events import EventBus, load_plugins
 from .models import ModelManager, models_dir
@@ -44,16 +44,21 @@ class App:
         self.plugins: list[str] = []
         self._stop = threading.Event()
         self._auto_summarized: set[str] = set()
+        self._started = False
+        self.hotkey: hotkey.Hotkey | None = None
+        self.hotkey_error = ""
 
     # --- lifecycle ---------------------------------------------------------------
 
     def start(self) -> None:
+        self._started = True
         self.plugins = load_plugins(self)
         self.pipeline.start()
         self.pipeline.recover()
         self.reminders.start()
         threading.Thread(target=self._daily_loop, daemon=True, name="daily-summary").start()
         threading.Thread(target=self._health_loop, daemon=True, name="microphone-check").start()
+        self.apply_hotkey()
         self.resume_continuous()
 
     def resume_continuous(self) -> None:
@@ -80,6 +85,8 @@ class App:
 
     def stop(self) -> None:
         self._stop.set()
+        if self.hotkey:
+            self.hotkey.stop()
         self.recorder.stop()
         self.reminders.stop()
         self.pipeline.stop()
@@ -176,6 +183,46 @@ class App:
 
     def update_settings(self, data: dict) -> None:
         data.get("recording", {}).pop("continuous", None)  # changed only through set_continuous
+        combo = data.get("recording", {}).get("hotkey")
+        if isinstance(combo, str) and combo.strip():
+            data["recording"]["hotkey"] = "+".join(p.strip().capitalize() for p in combo.split("+"))
+            hotkey.parse(combo)  # refuse an unusable shortcut before saving anything
+        old_combo = self.settings.recording.hotkey
         self.settings.update(data)
         save_settings(self.home, self.settings)
         self.speakers.threshold = self.settings.speech.speaker_match_threshold
+        if self.settings.recording.hotkey != old_combo and self._started:
+            self.apply_hotkey()
+
+    # --- keyboard shortcut ---------------------------------------------------------------
+
+    def apply_hotkey(self) -> None:
+        """(Re)register the dictation shortcut from settings."""
+        if self.hotkey:
+            self.hotkey.stop()
+            self.hotkey = None
+        self.hotkey_error = ""
+        combo = self.settings.recording.hotkey
+        if not combo or not hotkey.supported():
+            return
+        try:
+            candidate = hotkey.Hotkey(combo, self.toggle_dictation)
+        except ValueError as e:
+            self.hotkey_error = str(e)
+            return
+        if candidate.start():
+            self.hotkey = candidate
+        else:
+            self.hotkey_error = candidate.error
+
+    def toggle_dictation(self) -> None:
+        """What the shortcut does: start dictating, or stop and save."""
+        if self.recorder.mode == "dictation":
+            self.stop_capture()
+            hotkey.beep(False)
+            return
+        try:
+            self.start_capture("dictation")
+            hotkey.beep(True)
+        except RuntimeError as e:
+            self.notifier.send("Could not start dictation", str(e), ["desktop"])

@@ -24,6 +24,7 @@ def default_home() -> Path:
 class RecordingSettings:
     input_device: str = ""  # empty = system default microphone
     continuous: bool = False  # resume continuous recording when the app starts
+    hotkey: str = "Ctrl+Alt+D"  # starts/stops dictation from any program (Windows); empty turns it off
     block_silence_s: float = 6.0  # this much silence ends a recorded block
     max_block_s: float = 300.0  # long conversations are cut into blocks this long
     pre_roll_s: float = 1.0  # audio kept from before speech was detected

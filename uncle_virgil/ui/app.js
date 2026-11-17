@@ -150,6 +150,7 @@ async function pollStatus() {
   $("dictate").classList.toggle("recording", dictating);
   $("dictate").classList.toggle("primary", !dictating);
   $("dictate").disabled = s.mode === "sample";
+  $("dictate").title = (dictating ? "Stop and save the dictation" : "Record until you press again") + (s.hotkey ? ` (or press ${s.hotkey} in any program)` : "");
   $("continuous").checked = s.continuous;
   $("level").style.width = s.mode === "idle" ? "0" : Math.round(s.level * 100) + "%";
   $("recstate").textContent = s.recorder_error || { dictation: "Recording… press Stop dictation when you are done", sample: "Recording voice sample…", continuous: s.speaking ? "Hearing speech" : "Listening", idle: "" }[s.mode];
@@ -650,6 +651,7 @@ async function renderSettings() {
         if (key === "auto_time" && input.value !== v) input.value = v;
       }
       status.textContent = "All changes saved"; status.className = "small ok-text";
+      hotkeyError.textContent = r.hotkey.error;
       pollStatus();
     } catch (e) {
       status.textContent = "Not saved: " + e.message; status.className = "small error-text";
@@ -688,6 +690,7 @@ async function renderSettings() {
   };
   provider.addEventListener("change", () => { modelFor[current] = model.value; current = provider.value; model.value = modelFor[current] ?? ""; showLlm(); });
 
+  const hotkeyError = el("div", { class: "error-text small", style: "margin-top:4px" });
   const channelBoxes = [];
   const channels = cfg.channels.map((c) => {
     const box = el("input", { type: "checkbox", checked: s.reminders.channels.includes(c), "data-channel": c, onchange: scheduleSave });
@@ -707,6 +710,7 @@ async function renderSettings() {
 
   const m = state.status?.models;
   showLlm();
+  hotkeyError.textContent = cfg.hotkey.error;
   return [el("div", { class: "row spread sticky-head" }, el("h1", {}, "Settings"), status),
     el("div", { class: "card", style: "margin-top:14px" }, el("h2", {}, "You"),
       field("Your name", text(null, "user_name"), "Used in summaries until your voice is recorded under People.")),
@@ -714,6 +718,10 @@ async function renderSettings() {
       field("Microphone", select("recording", "input_device", devices)),
       field("Pause that ends a recording (seconds)", number("recording", "block_silence_s", { min: 1, max: 120, step: 0.5 }), "In continuous mode, a recording is closed and transcribed after this much silence."),
       field("Longest single recording (seconds)", number("recording", "max_block_s", { min: 30, max: 3600, step: 10 })),
+      cfg.hotkey.supported && field("Dictation shortcut", el("div", {},
+        bind("recording", "hotkey", el("input", { type: "text", value: s.recording.hotkey, placeholder: "For example Ctrl+Alt+D", style: "max-width:200px" })),
+        hotkeyError),
+        "Works from any program: press it to start dictating and again to stop, with a short sound each time. Leave empty to turn it off."),
       autostart),
     el("div", { class: "card" }, el("h2", {}, "Speech models"),
       field("Transcription model", select("speech", "asr_model", cfg.asr_models.map((x) => [x.key, `${x.label}, ${x.size_mb} MB${x.installed ? " (installed)" : ""}`])),

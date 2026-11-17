@@ -19,7 +19,7 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFil
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, audio, autostart, llm
+from . import __version__, audio, autostart, hotkey, llm
 from .app import App
 from .config import SECRET_NAMES, get_secret, set_secret
 from .llm import LLMError
@@ -119,6 +119,7 @@ def create_app(app: App, token: str | None = None) -> FastAPI:
             "heard": [r for r in app.reminder_store.all() if _newly_heard(r)],
             "owner_enrolled": bool(app.speakers.user_ids()),
             "has_reminders": bool(app.reminder_store.items),
+            "hotkey": app.settings.recording.hotkey if app.hotkey else "",
             "llm_provider": app.settings.llm.provider,
             "setup_dismissed": app.settings.setup_dismissed,
         }
@@ -361,6 +362,7 @@ def create_app(app: App, token: str | None = None) -> FastAPI:
             "home": str(app.home),
             "plugins": app.plugins,
             "autostart": {"supported": autostart.supported(), "enabled": autostart.enabled()},
+            "hotkey": {"supported": hotkey.supported(), "active": bool(app.hotkey), "error": app.hotkey_error},
         }
 
     @api.put("/api/settings")
