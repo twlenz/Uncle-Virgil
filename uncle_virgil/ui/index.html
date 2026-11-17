@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Uncle Virgil</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <aside class="nav">
+    <div class="brand">Uncle Virgil</div>
+    <nav id="nav"></nav>
+    <div class="nav-foot" id="foot"></div>
+  </aside>
+  <main>
+    <header class="recbar">
+      <button id="dictate" class="btn primary" title="Record until you press again">Dictate</button>
+      <label class="switch" title="Listen all the time and keep only stretches with speech">
+        <input type="checkbox" id="continuous"><span class="track"></span><span>Continuous recording</span>
+      </label>
+      <div class="meter" aria-hidden="true"><div id="level"></div></div>
+      <span id="recstate" class="muted"></span>
+    </header>
+    <div id="banners"></div>
+    <section id="view"></section>
+  </main>
+</div>
+<dialog id="dialog"></dialog>
+<audio id="player"></audio>
+<script src="app.js"></script>
+</body>
+</html>

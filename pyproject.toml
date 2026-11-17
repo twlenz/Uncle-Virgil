@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uncle-virgil"
+version = "0.1.0"
+description = "A private, local-first voice notebook: records, transcribes, summarizes your day, and reminds you."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "sherpa-onnx>=1.12",
+    "numpy",
+    "soundfile>=0.13",
+    "soxr",
+    "sounddevice",
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "httpx",
+    "tomli-w",
+    "keyring",
+    "pywebview",
+    "desktop-notifier",
+    "anthropic>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+uncle-virgil = "uncle_virgil.__main__:main"
+
+[project.gui-scripts]
+uncle-virgil-app = "uncle_virgil.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["uncle_virgil*"]
+
+[tool.setuptools.package-data]
+uncle_virgil = ["ui/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["models: needs the speech models downloaded (set UNCLE_VIRGIL_TEST_MODELS)"]
