@@ -24,7 +24,8 @@ class Pipeline:
         self.app = app
         self._queue: queue.Queue = queue.Queue()
         self._thread: threading.Thread | None = None
-        self.pending = 0
+        self._lock = threading.Lock()
+        self._queued: set[tuple[str, str]] = set()  # blocks waiting or being processed
         self.last_error = ""
 
     def submit(self, samples: np.ndarray, start: datetime, mode: str) -> tuple[str, str]:
@@ -33,20 +34,33 @@ class Pipeline:
         self._enqueue(date, block, mode)
         return date, block
 
-    def _enqueue(self, date: str, block: str, mode: str) -> None:
-        self.pending += 1
+    @property
+    def pending(self) -> int:
+        with self._lock:
+            return len(self._queued)
+
+    def _enqueue(self, date: str, block: str, mode: str) -> bool:
+        with self._lock:
+            if (date, block) in self._queued:
+                return False
+            self._queued.add((date, block))
         self._queue.put((date, block, mode))
+        return True
 
     def recover(self) -> int:
-        """Queue blocks that were recorded but never transcribed. Call only while the queue is empty."""
+        """Queue blocks that were recorded but never transcribed. Safe to call at any time."""
         found = 0
         for date in self.app.storage.list_days():
             done = {s["block"] for s in self.app.storage.load_segments(date)}
             for block, _ in self.app.storage.audio_blocks(date):
                 if block not in done:
-                    self._enqueue(date, block, "continuous")
-                    found += 1
+                    found += self._enqueue(date, block, "continuous")
         return found
+
+    def untranscribed(self, date: str) -> int:
+        """Recordings on `date` that have audio but no transcript yet."""
+        done = {s["block"] for s in self.app.storage.load_segments(date)}
+        return sum(block not in done for block, _ in self.app.storage.audio_blocks(date))
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, daemon=True, name="pipeline")
@@ -74,13 +88,14 @@ class Pipeline:
                 log.exception("could not process %s %s", date, block)
                 self.last_error = f"{date} {block}: {type(e).__name__}: {e}"
             finally:
-                self.pending -= 1
+                with self._lock:
+                    self._queued.discard((date, block))
 
     def process(self, date: str, block: str, mode: str) -> list[dict]:
         app = self.app
         path = app.storage.audio_file(date, block)
-        if path is None:
-            return []
+        if path is None or any(s["block"] == block for s in app.storage.load_segments(date)):
+            return []  # deleted meanwhile, or already transcribed
         result = app.engine.transcribe(audio.read_audio(path), assume_speech=mode == "dictation")
         if not result.turns:
             app.storage.delete_block_audio(date, block)  # no speech: nothing worth keeping

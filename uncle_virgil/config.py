@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
+import re
 import tomllib
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
@@ -54,6 +56,7 @@ class SummarySettings:
 class ReminderSettings:
     lead_minutes: int = 30
     use_llm: bool = False
+    confirm_new: bool = True  # desktop notification when a reminder is heard, so mistakes are caught early
     channels: list[str] = field(default_factory=lambda: ["desktop"])
 
 
@@ -71,6 +74,7 @@ class NotifySettings:
 @dataclass
 class Settings:
     user_name: str = "Me"
+    setup_dismissed: bool = False
     recording: RecordingSettings = field(default_factory=RecordingSettings)
     speech: SpeechSettings = field(default_factory=SpeechSettings)
     llm: LLMSettings = field(default_factory=LLMSettings)
@@ -82,8 +86,31 @@ class Settings:
         return asdict(self)
 
     def update(self, data: dict) -> None:
-        """Merge a (possibly partial) nested dict, ignoring unknown keys."""
+        """Merge a (possibly partial) nested dict, ignoring unknown keys, then bring values into range."""
         _merge(self, data)
+        for (section, key), (low, high) in LIMITS.items():
+            obj = getattr(self, section)
+            value = getattr(obj, key)
+            setattr(obj, key, type(value)(min(max(value, low), high)))
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", self.summary.auto_time):
+            self.summary.auto_time = ""
+
+
+# Allowed range of each number. An out-of-range value (say 0 seconds of silence
+# ending a recording) would quietly break the app, so it is moved into range.
+LIMITS = {
+    ("recording", "block_silence_s"): (1, 120),
+    ("recording", "max_block_s"): (30, 3600),
+    ("recording", "pre_roll_s"): (0, 5),
+    ("recording", "vad_threshold"): (0.1, 0.95),
+    ("speech", "threads"): (0, 64),
+    ("speech", "speaker_match_threshold"): (0.2, 0.95),
+    ("llm", "max_chars_per_request"): (2000, 2_000_000),
+    ("summary", "conversation_gap_s"): (10, 3600),
+    ("summary", "gap_attribution_min"): (0, 240),
+    ("reminders", "lead_minutes"): (0, 1440),
+    ("notify", "smtp_port"): (1, 65535),
+}
 
 
 def _merge(obj, data: dict) -> None:
@@ -96,7 +123,7 @@ def _merge(obj, data: dict) -> None:
                 _merge(current, new)
         elif isinstance(current, bool):
             setattr(obj, f.name, bool(new))
-        elif isinstance(current, (int, float)) and isinstance(new, (int, float)):
+        elif isinstance(current, (int, float)) and isinstance(new, (int, float)) and not isinstance(new, bool) and math.isfinite(new):
             setattr(obj, f.name, type(current)(new))
         elif isinstance(current, list) and isinstance(new, list):
             setattr(obj, f.name, [str(x) for x in new])

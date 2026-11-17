@@ -14,18 +14,20 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 from collections import deque
 from datetime import datetime, timedelta
 from typing import Callable
 
 import numpy as np
 
-from .audio import SAMPLE_RATE, resample
+from .audio import SAMPLE_RATE
 from .config import RecordingSettings
 
 log = logging.getLogger(__name__)
 
 FRAME = 512  # samples per voice-detector frame (32 ms)
+STALL_S = 3.0  # no audio from an open microphone for this long means it was disconnected
 MIN_SPEECH_S = 0.3  # blocks with less speech than this are noise and dropped
 KEEP_SILENCE_S = 0.5  # trailing silence kept at the end of a block
 SOFT_CUT_PAUSE_S = 0.5  # once a block is past its maximum length, cut at a pause this long
@@ -101,6 +103,9 @@ class Recorder:
         self._stream = None
         self._queue: queue.Queue = queue.Queue()
         self._thread: threading.Thread | None = None
+        self._mic_lock = threading.RLock()  # opening/closing the microphone; separate from _lock, which the audio thread holds
+        self._last_audio = 0.0  # time.monotonic() of the last audio from the microphone
+        self._last_reopen = 0.0
 
     @property
     def speaking(self) -> bool:
@@ -122,7 +127,8 @@ class Recorder:
             self.mode = mode
         if open_microphone:
             try:
-                self._open_microphone()
+                with self._mic_lock:
+                    self._open_microphone()
             except Exception as e:
                 self.mode, self._segmenter = "idle", None
                 self.error = f"Could not open the microphone: {e}"
@@ -130,7 +136,8 @@ class Recorder:
 
     def stop(self) -> np.ndarray | None:
         """Stop recording. In "sample" mode the recorded audio is returned instead of saved."""
-        self._close_microphone()
+        with self._mic_lock:
+            self._close_microphone()
         with self._lock:
             mode, self.mode = self.mode, "idle"
             self.level = 0.0
@@ -188,21 +195,53 @@ class Recorder:
 
         self._queue = queue.Queue()
         self._stream = sd.InputStream(device=device, samplerate=rate, channels=1, dtype="float32", blocksize=rate // 10, callback=callback)
-        self._thread = threading.Thread(target=self._pump, args=(self._stream, self._queue, rate), daemon=True, name="recorder")
+        self._thread = threading.Thread(target=self._pump, args=(self._queue, rate), daemon=True, name="recorder")
+        self._last_audio = time.monotonic()
         self._stream.start()
         self._thread.start()
 
-    def _pump(self, stream, q: queue.Queue, rate: int) -> None:
+    def _pump(self, q: queue.Queue, rate: int) -> None:
         """Move audio from the sound card callback into `feed`, off the realtime thread."""
+        import soxr
+
+        # One resampler for the whole stream: converting each chunk separately would put a click at every chunk edge.
+        resampler = soxr.ResampleStream(rate, SAMPLE_RATE, 1, dtype="float32") if rate != SAMPLE_RATE else None
         while True:
             item = q.get()
             if item is None:
                 return
             samples, at = item
+            self._last_audio = time.monotonic()
             try:
-                self.feed(resample(samples, rate), at)
+                if resampler:
+                    samples = resampler.resample_chunk(samples)
+                self.feed(samples, at)
             except Exception:
                 log.exception("recorder failed while handling audio")
+
+    def check_microphone(self) -> None:
+        """Notice a microphone that stopped delivering audio (unplugged, Bluetooth dropped) and reopen it."""
+        with self._mic_lock:
+            self._check_microphone()
+
+    def _check_microphone(self) -> None:
+        if self._stream is None or self.mode == "idle":
+            return
+        now = time.monotonic()
+        if now - self._last_audio < STALL_S:
+            if self.error.startswith("The microphone stopped"):
+                self.error = ""
+            return
+        self.error = "The microphone stopped sending audio. Check that it is connected; reconnecting…"
+        if now - self._last_reopen < 10:
+            return
+        self._last_reopen = now
+        log.warning("microphone stalled; reopening")
+        try:
+            self._close_microphone()
+            self._open_microphone()
+        except Exception as e:
+            log.warning("could not reopen the microphone: %s", e)
 
     def _close_microphone(self) -> None:
         stream, self._stream = self._stream, None

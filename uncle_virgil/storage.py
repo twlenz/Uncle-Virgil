@@ -135,6 +135,43 @@ class Storage:
             self._write(folder / "segments.jsonl", "".join(json.dumps(s, ensure_ascii=False) + "\n" for s in segments))
             self.render_transcript(date)
 
+    def update_segment(self, date: str, segment_id: str, **changes) -> dict:
+        with self._lock:
+            segments = self.load_segments(date)
+            seg = next((s for s in segments if s["id"] == segment_id), None)
+            if seg is None:
+                raise KeyError("That line no longer exists")
+            seg.update(changes, edited=True)
+            self.rewrite_segments(date, segments)
+            return seg
+
+    def delete_segments(self, date: str, segment_ids: set[str]) -> dict:
+        """Delete lines of a transcript, and the audio of any recording left with no lines."""
+        with self._lock:
+            segments = self.load_segments(date)
+            keep = [s for s in segments if s["id"] not in segment_ids]
+            touched = {s["block"] for s in segments if s["id"] in segment_ids}
+            orphaned = touched - {s["block"] for s in keep}
+            for block in orphaned:
+                self.delete_block_audio(date, block)
+            self.rewrite_segments(date, keep)
+            return {"lines": len(segments) - len(keep), "recordings": len(orphaned)}
+
+    def search(self, query: str, limit: int = 200) -> list[dict]:
+        """Lines containing every word of `query` (any case), newest day first."""
+        words = query.lower().split()
+        if not words:
+            return []
+        hits = []
+        for date in self.list_days():
+            for seg in self.load_segments(date):
+                haystack = f"{seg['text']} {self.speaker_name(seg)}".lower()
+                if all(w in haystack for w in words):
+                    hits.append({**seg, "date": date, "speaker": self.speaker_name(seg)})
+                    if len(hits) >= limit:
+                        return hits
+        return hits
+
     def speaker_name(self, seg: dict) -> str:
         return self.name_resolver(seg.get("speaker_id", "")) or seg.get("speaker") or "Unknown"
 

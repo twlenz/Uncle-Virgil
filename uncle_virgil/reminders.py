@@ -203,6 +203,25 @@ class ReminderStore:
             self._save()
             return reminder
 
+    def reschedule(self, reminder_id: str, now: datetime, lead_minutes: int, text: str | None = None, due: datetime | None = None, snooze_minutes: int | None = None) -> dict | None:
+        """Change a reminder's text or time, or snooze it. Any change makes it pending again."""
+        with self._lock:
+            r = next((x for x in self.items if x["id"] == reminder_id), None)
+            if r is None:
+                return None
+            if text is not None and text.strip():
+                r["text"] = text.strip()
+            if due is not None:
+                r["due"] = due.isoformat(timespec="seconds")
+                r["notify_at"] = max(due - timedelta(minutes=lead_minutes), now).isoformat(timespec="seconds")
+                r["status"] = "pending"
+            if snooze_minutes:
+                r["notify_at"] = (now + timedelta(minutes=snooze_minutes)).isoformat(timespec="seconds")
+                r["status"] = "pending"
+            r["acknowledged"] = True
+            self._save()
+            return r
+
     def update(self, reminder_id: str, **changes) -> dict | None:
         with self._lock:
             for r in self.items:
@@ -263,7 +282,7 @@ class ReminderService:
 
     # --- creating reminders from speech --------------------------------------------
 
-    def handle_segments(self, segments: list[dict]) -> list[dict]:
+    def handle_segments(self, segments: list[dict], now: datetime | None = None) -> list[dict]:
         """Look for reminders in newly transcribed utterances. Returns the ones created."""
         settings = self.app.settings.reminders
         user_ids = self.app.speakers.user_ids()
@@ -274,26 +293,31 @@ class ReminderService:
             for note in find_notes(seg["text"]):
                 due = parse_due(note["text"], said_at)
                 if due and due > said_at:
-                    created.append(self._add(note["text"], due, "rule", seg))
+                    created.append(self._add(note["text"], due, "rule", seg, now))
         if settings.use_llm and mine and any(_TIME_WORDS.search(s["text"]) for s in mine):
             try:
-                created += self._llm_pass(mine)
+                created += self._llm_pass(mine, now)
             except Exception as e:
                 log.warning("LLM reminder pass failed: %s", e)
         return [r for r in created if r]
 
     def _add(self, text: str, due: datetime, source: str, seg: dict | None, now: datetime | None = None) -> dict | None:
         now = now or datetime.now().astimezone()
+        if source != "manual" and due < now:
+            return None  # e.g. found in an old recording that was imported: the time has passed, the note stays in that day's summary
         origin = {"date": seg["start"][:10], "segment": seg["id"]} if seg else {}
         reminder = self.store.add(text, due, self.app.settings.reminders.lead_minutes, source, now, origin)
         if reminder:
             self.app.events.emit("reminder_created", reminder=reminder)
+            if source != "manual" and self.app.settings.reminders.confirm_new and "desktop" in self.app.settings.reminders.channels:
+                # Say what was understood, so a misheard time can be fixed right away.
+                self.app.notifier.send("Reminder set: " + reminder["text"], describe_due(due, now), ["desktop"])
         return reminder
 
     def add_manual(self, text: str, due: datetime) -> dict | None:
         return self._add(text.strip(), due, "manual", None)
 
-    def _llm_pass(self, segments: list[dict]) -> list[dict | None]:
+    def _llm_pass(self, segments: list[dict], now: datetime | None = None) -> list[dict | None]:
         from .llm import complete_json
 
         provider = self.app.llm()
@@ -316,7 +340,7 @@ class ReminderService:
             except (ValueError, KeyError, TypeError):
                 continue
             if due > said_at and item.get("text"):
-                out.append(self._add(item["text"], due, "llm", segments[0]))
+                out.append(self._add(item["text"], due, "llm", segments[0], now))
         return out
 
     # --- sending ------------------------------------------------------------------------

@@ -16,13 +16,19 @@ microphone are planned but not built.
   contain speech.
 - **Transcripts** with a timestamp and speaker on every line. Your voice (and
   anyone else you name) is recognized by name; other voices appear as
-  "Speaker 1", "Speaker 2".
+  "Speaker 1", "Speaker 2". Play any line, correct its words or speaker, or
+  delete a conversation that should not have been recorded.
+- **Search** across everything you have recorded, under History.
 - **Reminders**: say "note to self, meeting with Jack at 5 pm" and you are
   notified at 4:30. Notification by desktop toast, email, or phone push.
+  When a reminder is heard, a confirmation shows the time it was understood
+  as, so a misheard time can be fixed. Reminders can be changed or snoozed.
 - **Daily summary**: work performed, time per task with sub-tasks, and your
   notes to self and ideas. Pages for today, yesterday, and any past day.
 - **Storage controls**: delete audio in a date range while keeping the text,
   or compress audio in a date range.
+- **Import** recordings made elsewhere (phone, voice recorder); they are
+  placed in the day and time they were recorded.
 - **Your choice of language model**: none, Claude, ChatGPT, or a model
   running on your own computer.
 
@@ -31,8 +37,13 @@ microphone are planned but not built.
 1. Install Python 3.12 or 3.13 from [python.org](https://www.python.org/downloads/windows/).
 2. Download this repository and double-click `start.bat`. The first run
    installs the app into a `.venv` folder next to it, then opens the window.
-3. In the app, press **Download models** (about 500 MB, one time).
-4. Open **People**, enter your name, and record a 20-second voice sample.
+3. Follow the **Getting started** list on the Today page: download the speech
+   models (about 500 MB, one time), then record a 20-second voice sample.
+
+To record all day, switch on **Continuous recording**, and under Settings >
+Recording tick "Start Uncle Virgil when I sign in to Windows". The app then
+opens minimized at sign-in and resumes recording. Closing the window while it
+is recording asks first, since closing stops the recording.
 
 If no audio is picked up, check Windows Settings > Privacy & security >
 Microphone > "Let desktop apps access your microphone".
@@ -146,7 +157,8 @@ is [pywebview](https://pywebview.flowrl.com) over a local FastAPI service.
 | `pipeline.py` | Background transcription queue |
 | `reminders.py`, `notify.py` | Note detection, time parsing, scheduling, channels |
 | `summary.py`, `llm/` | Daily summary and model providers |
-| `storage.py` | The on-disk layout, delete and compress |
+| `storage.py` | The on-disk layout, search, corrections, delete and compress |
+| `autostart.py` | Start with Windows (per-user registry entry) |
 | `server.py`, `ui/` | Local API and the window's pages |
 
 ## Known limits
@@ -159,7 +171,12 @@ is [pywebview](https://pywebview.flowrl.com) over a local FastAPI service.
   speaker next to them.
 - Text-message notifications are not built. Phone push through ntfy covers
   the same need; SMS can be added as a notification channel plugin.
-- The app must be open to record. There is no system-tray mode yet.
+- The app must be open (it can be minimized) to record. There is no
+  system-tray mode yet.
+- Importing reads FLAC, WAV, Ogg/Opus and MP3. Phone recordings in M4A/AAC
+  need [ffmpeg](https://ffmpeg.org) installed.
+- Starting with Windows, the close confirmation, and desktop notifications
+  were written for Windows but have only been tested on Linux so far.
 
 ## Development
 

@@ -1,4 +1,5 @@
 import time
+from datetime import datetime
 
 import pytest
 
@@ -70,7 +71,7 @@ def test_long_days_are_sent_in_several_requests_and_nothing_is_dropped(app, fake
 
 def test_without_a_model_the_summary_still_lists_notes_and_reminders(app):
     day(app)
-    app.reminders.handle_segments(app.storage.load_segments(D))
+    app.reminders.handle_segments(app.storage.load_segments(D), now=datetime.fromisoformat(f"{D}T11:05:00").astimezone())
     s = app.summarize(D)
     assert s["tasks"] == [] and s["llm"] is None
     assert [n["text"] for n in s["notes"]] == ["Send the forecast to Ana at 3pm"]

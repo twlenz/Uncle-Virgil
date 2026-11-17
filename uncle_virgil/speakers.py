@@ -129,6 +129,12 @@ class SpeakerStore:
             self.storage._write(self._unknowns_path(date), json.dumps(unknowns))
             return match["id"], match["label"]
 
+    def choices(self, date: str) -> list[dict]:
+        """Everyone a line on `date` can be attributed to: named people, that day's unnamed voices, and Unknown."""
+        named = [{"id": s["id"], "name": s["name"]} for s in self.speakers]
+        unnamed = [{"id": u["id"], "name": u["label"]} for u in sorted(self._load_unknowns(date), key=lambda u: u["n"])]
+        return named + unnamed + [{"id": "unk", "name": "Unknown"}]
+
     def name_unknown(self, date: str, unknown_id: str, name: str, is_user: bool = False) -> dict:
         """Give a name to one day's "Speaker N" so they are recognized from now on."""
         with self._lock:

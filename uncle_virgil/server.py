@@ -19,7 +19,7 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFil
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, audio, llm
+from . import __version__, audio, autostart, llm
 from .app import App
 from .config import SECRET_NAMES, get_secret, set_secret
 from .llm import LLMError
@@ -31,6 +31,13 @@ UI_DIR = Path(__file__).parent / "ui"
 _LOCAL_HOSTS = ("127.0.0.1", "localhost")
 _MEDIA_TYPES = {".flac": "audio/flac", ".opus": "audio/ogg", ".ogg": "audio/ogg", ".wav": "audio/wav", ".mp3": "audio/mpeg"}
 MIN_SAMPLE_S = 8  # shortest voice sample accepted for enrollment
+
+
+def _newly_heard(reminder: dict) -> bool:
+    """A reminder picked up from speech in the last hour that the user has not looked at yet."""
+    if reminder["source"] == "manual" or reminder.get("acknowledged") or reminder["status"] != "pending":
+        return False
+    return datetime.now().astimezone() - datetime.fromisoformat(reminder["created"]) < timedelta(hours=1)
 
 
 def _parse_range(start: str, end: str) -> tuple[datetime, datetime]:
@@ -109,7 +116,11 @@ def create_app(app: App, token: str | None = None) -> FastAPI:
             "models": app.models.status(app.settings.speech.asr_model),
             "today": datetime.now().date().isoformat(),
             "alerts": [r for r in app.reminder_store.all() if r["status"] == "notified"],
+            "heard": [r for r in app.reminder_store.all() if _newly_heard(r)],
             "owner_enrolled": bool(app.speakers.user_ids()),
+            "has_reminders": bool(app.reminder_store.items),
+            "llm_provider": app.settings.llm.provider,
+            "setup_dismissed": app.settings.setup_dismissed,
         }
 
     @api.post("/api/record/dictation")
@@ -126,8 +137,10 @@ def create_app(app: App, token: str | None = None) -> FastAPI:
         return status()
 
     @api.post("/api/import")
-    def import_file(file: UploadFile = File(...), started: str = Form("")):
-        """Add an existing recording (any source: phone, wearable, file)."""
+    def import_file(file: UploadFile = File(...), started: str = Form(""), ended: str = Form("")):
+        """Add an existing recording (any source: phone, wearable, file).
+
+        Give the time it started or ended; most recorders stamp a file with the time it ended."""
         if not app.engine.ready():
             raise HTTPException(400, "Download the speech models first (Settings > Speech models).")
         with tempfile.TemporaryDirectory() as tmp:
@@ -135,7 +148,13 @@ def create_app(app: App, token: str | None = None) -> FastAPI:
             path.write_bytes(file.file.read())
             samples = audio.read_audio(path)
         length = timedelta(seconds=len(samples) / audio.SAMPLE_RATE)
-        start = datetime.fromisoformat(started).astimezone() if started else datetime.now().astimezone() - length
+        try:
+            if started:
+                start = datetime.fromisoformat(started).astimezone()
+            else:
+                start = (datetime.fromisoformat(ended).astimezone() if ended else datetime.now().astimezone()) - length
+        except ValueError as e:
+            raise HTTPException(400, "Choose when the recording was made") from e
         return {"blocks": import_audio(app, samples, start), "seconds": length.total_seconds(), "date": start.date().isoformat()}
 
     # --- days ------------------------------------------------------------------------------
@@ -158,7 +177,36 @@ def create_app(app: App, token: str | None = None) -> FastAPI:
             "summary": app.storage.load_summary(date),
             "job": app.jobs.get(f"summary:{date}"),
             "llm": app.settings.llm.provider,
+            "speakers": app.speakers.choices(date),
+            "untranscribed": app.pipeline.untranscribed(date),
         }
+
+    @api.patch("/api/days/{date}/segments/{segment_id}")
+    def edit_segment(date: str, segment_id: str, text: str | None = Body(None, embed=True), speaker_id: str | None = Body(None, embed=True)):
+        """Correct a line: its words, or who said it."""
+        changes = {}
+        if text is not None:
+            if not text.strip():
+                raise HTTPException(400, "A line cannot be empty. Delete it instead.")
+            changes["text"] = text.strip()
+        if speaker_id is not None:
+            choice = next((c for c in app.speakers.choices(date) if c["id"] == speaker_id), None)
+            if choice is None:
+                raise HTTPException(400, "Unknown speaker")
+            changes.update(speaker_id=choice["id"], speaker=choice["name"])
+        return app.storage.update_segment(date, segment_id, **changes)
+
+    @api.post("/api/days/{date}/segments/delete")
+    def delete_segments(date: str, ids: list[str] = Body(embed=True)):
+        """Delete lines (and any recording left with none): for things that should not have been recorded."""
+        return app.storage.delete_segments(date, set(ids))
+
+    @api.get("/api/search")
+    def search(q: str):
+        hits = app.storage.search(q)
+        for hit in hits:
+            hit["has_audio"] = app.storage.audio_file(hit["date"], hit["block"]) is not None
+        return hits
 
     @api.post("/api/days/{date}/summarize")
     def summarize(date: str):
@@ -209,10 +257,27 @@ def create_app(app: App, token: str | None = None) -> FastAPI:
         return reminder
 
     @api.patch("/api/reminders/{reminder_id}")
-    def update_reminder(reminder_id: str, status: str = Body(embed=True)):
-        if status not in ("pending", "done"):
-            raise HTTPException(400, "bad status")
-        return app.reminder_store.update(reminder_id, status=status) or Response(status_code=404)
+    def update_reminder(
+        reminder_id: str,
+        status: str | None = Body(None, embed=True),
+        text: str | None = Body(None, embed=True),
+        due: str | None = Body(None, embed=True),
+        snooze_minutes: int | None = Body(None, embed=True),
+        acknowledged: bool | None = Body(None, embed=True),
+    ):
+        if status is not None:
+            if status not in ("pending", "done"):
+                raise HTTPException(400, "bad status")
+            return app.reminder_store.update(reminder_id, status=status, acknowledged=True) or Response(status_code=404)
+        if acknowledged:
+            return app.reminder_store.update(reminder_id, acknowledged=True) or Response(status_code=404)
+        try:
+            when = datetime.fromisoformat(due).astimezone() if due else None
+        except ValueError as e:
+            raise HTTPException(400, "Choose a date and time") from e
+        now = datetime.now().astimezone()
+        reminder = app.reminder_store.reschedule(reminder_id, now, app.settings.reminders.lead_minutes, text, when, snooze_minutes)
+        return reminder or Response(status_code=404)
 
     @api.delete("/api/reminders/{reminder_id}")
     def delete_reminder(reminder_id: str):
@@ -295,6 +360,7 @@ def create_app(app: App, token: str | None = None) -> FastAPI:
             "asr_models": [{"key": m.key, "label": m.label, "size_mb": m.size_mb, "installed": app.models.installed(m)} for m in ASR_MODELS.values()],
             "home": str(app.home),
             "plugins": app.plugins,
+            "autostart": {"supported": autostart.supported(), "enabled": autostart.enabled()},
         }
 
     @api.put("/api/settings")
@@ -306,12 +372,22 @@ def create_app(app: App, token: str | None = None) -> FastAPI:
 
     @api.post("/api/secrets")
     def put_secret(name: str = Body(embed=True), value: str = Body(embed=True)):
-        set_secret(name, value.strip())
+        try:
+            set_secret(name, value.strip())
+        except ValueError:
+            raise
+        except Exception as e:  # no usable credential store on this system
+            raise HTTPException(400, f"The key could not be saved in the system credential store: {e}") from e
         return {"set": bool(value.strip())}
+
+    @api.post("/api/autostart")
+    def put_autostart(on: bool = Body(embed=True)):
+        autostart.set_enabled(on, app.home)
+        return {"enabled": autostart.enabled()}
 
     @api.post("/api/models/download")
     def download_models():
-        started = app.models.download_missing(app.settings.speech.asr_model, on_done=app.pipeline.recover)
+        started = app.models.download_missing(app.settings.speech.asr_model, on_done=app.models_downloaded)
         return {"started": started}
 
     @api.post("/api/llm/test")

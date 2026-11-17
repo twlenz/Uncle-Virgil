@@ -57,15 +57,16 @@ def test_spoken_note_becomes_reminder_and_fires_ahead_of_time(app):
     today = NOW.date().isoformat()
     mine = seg(today, "14:00:00", "Note to self, meeting with Jack at 5pm.", speaker_id=tom)
     theirs = seg(today, "14:00:10", "Remind me to call you at 4pm.", speaker="Speaker 1", speaker_id="unk-1")
-    created = app.reminders.handle_segments([mine, theirs])
+    created = app.reminders.handle_segments([mine, theirs], now=NOW)
     assert [r["text"] for r in created] == ["Meeting with Jack at 5pm"]  # other people's words are ignored
-    assert app.reminders.handle_segments([mine]) == []  # same note twice is not duplicated
+    assert app.reminders.handle_segments([mine], now=NOW) == []  # same note twice is not duplicated
 
     reminder = app.reminder_store.update(created[0]["id"], notify_at=at(16, 16, 30).isoformat())
     assert app.reminders.tick(at(16, 16, 29)) == []
     assert len(app.reminders.tick(at(16, 16, 30))) == 1
-    assert app.sent == [("Reminder: Meeting with Jack at 5pm", "In 30 minutes, at 5:00 PM")]
-    assert app.reminders.tick(at(16, 16, 31)) == []  # sent once only
+    assert app.sent[0][0] == "Reminder set: Meeting with Jack at 5pm"  # confirmation when it was heard
+    assert app.sent[1:] == [("Reminder: Meeting with Jack at 5pm", "In 30 minutes, at 5:00 PM")]
+    assert app.reminders.tick(at(16, 16, 31)) == [] and len(app.sent) == 2  # sent once only
     assert app.reminder_store.all()[0]["status"] == "notified"
     assert reminder["origin"] == {"date": today, "segment": mine["id"]}
 
@@ -87,5 +88,5 @@ def test_llm_pass_adds_reminders_the_rules_miss(app, monkeypatch):
 
     monkeypatch.setattr(app, "llm", lambda: Provider())
     today = NOW.date().isoformat()
-    created = app.reminders.handle_segments([seg(today, "14:00:00", "I have the dentist tomorrow at 9.")])
+    created = app.reminders.handle_segments([seg(today, "14:00:00", "I have the dentist tomorrow at 9.")], now=NOW)
     assert [(r["text"], r["due"][:16], r["source"]) for r in created] == [("Dentist appointment", "2026-11-17T09:00", "llm")]

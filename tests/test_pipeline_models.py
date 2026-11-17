@@ -15,8 +15,9 @@ from .conftest import DATA
 
 pytestmark = pytest.mark.skipif(not os.environ.get("UNCLE_VIRGIL_TEST_MODELS"), reason="speech models not available")
 
-T0 = datetime(2026, 11, 16, 14, 0).astimezone()
-D = "2026-11-16"
+# Tomorrow, so the "meeting at 5pm" in the recording is still ahead and becomes a reminder.
+T0 = (datetime.now() + timedelta(days=1)).replace(hour=14, minute=0, second=0, microsecond=0).astimezone()
+D = T0.date().isoformat()
 
 
 def test_recorded_conversation_becomes_named_transcript_reminder_and_summary(app):

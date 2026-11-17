@@ -35,6 +35,7 @@ def main() -> None:
     parser.add_argument("--home", type=Path, default=default_home(), help="data folder (default: %(default)s)")
     parser.add_argument("--port", type=int, default=0, help="port for the local service (default: any free port)")
     parser.add_argument("--no-window", action="store_true", help="run the service without the desktop window")
+    parser.add_argument("--minimized", action="store_true", help="open the window minimized (used when starting with Windows)")
     args = parser.parse_args()
 
     args.home.mkdir(parents=True, exist_ok=True)
@@ -63,8 +64,14 @@ def main() -> None:
         threading.Thread(target=server.run, daemon=True, name="server").start()
         while not server.started:
             time.sleep(0.05)
-        webview.create_window("Uncle Virgil", url, width=1180, height=800, min_size=(820, 560))
-        webview.start()
+        window = webview.create_window("Uncle Virgil", url, width=1180, height=800, min_size=(820, 560), minimized=args.minimized)
+
+        def on_closing(window):
+            # Closing the window quits the app, which stops recording; ask first if something is recording.
+            window.confirm_close = app.recorder.mode != "idle"
+
+        window.events.closing += on_closing
+        webview.start(localization={"global.quitConfirmation": "Uncle Virgil is recording. Closing the window stops recording. Close anyway?"})
     finally:
         app.stop()
         server.should_exit = True

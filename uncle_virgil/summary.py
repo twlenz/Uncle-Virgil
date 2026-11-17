@@ -168,7 +168,15 @@ def _tracked_seconds(conversations: list[dict], gap_minutes: int) -> list[float]
     return seconds
 
 
-def summarize_day(date: str, storage: Storage, provider: LLMProvider | None, settings: Settings, owner: str, reminders: list[dict] = ()) -> dict:
+def summarize_day(
+    date: str,
+    storage: Storage,
+    provider: LLMProvider | None,
+    settings: Settings,
+    owner: str,
+    reminders: list[dict] = (),
+    owner_ids: set[str] = frozenset(),
+) -> dict:
     segments = storage.load_segments(date)
     if not segments:
         raise ValueError(f"Nothing was recorded on {date}")
@@ -178,6 +186,8 @@ def summarize_day(date: str, storage: Storage, provider: LLMProvider | None, set
 
     notes = []
     for seg in segments:
+        if owner_ids and seg.get("speaker_id") not in owner_ids and seg.get("mode") != "dictation":
+            continue  # someone else's "note to self" is not yours
         notes += [{"time": seg["start"][11:16], **n} for n in find_notes(seg["text"])]
 
     data = {

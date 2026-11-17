@@ -53,11 +53,30 @@ class App:
         self.pipeline.recover()
         self.reminders.start()
         threading.Thread(target=self._daily_loop, daemon=True, name="daily-summary").start()
-        if self.settings.recording.continuous:
+        threading.Thread(target=self._health_loop, daemon=True, name="microphone-check").start()
+        self.resume_continuous()
+
+    def resume_continuous(self) -> None:
+        """Restart continuous recording if it is switched on but not running (at start-up, after a dictation)."""
+        if not self.settings.recording.continuous or self.recorder.mode != "idle":
+            return
+        try:
+            self.set_continuous(True)
+        except RuntimeError as e:
+            log.warning("continuous recording not resumed: %s", e)
+            # Leave the switch on, and say why nothing is being recorded.
+            self.recorder.error = f"Continuous recording is paused: {e}"
+
+    def models_downloaded(self) -> None:
+        self.pipeline.recover()
+        self.resume_continuous()
+
+    def _health_loop(self) -> None:
+        while not self._stop.wait(2):
             try:
-                self.set_continuous(True)
-            except RuntimeError as e:
-                log.warning("continuous recording not resumed: %s", e)
+                self.recorder.check_microphone()
+            except Exception:
+                log.exception("microphone check failed")
 
     def stop(self) -> None:
         self._stop.set()
@@ -74,6 +93,8 @@ class App:
             self.recorder.start("continuous")
         elif not on and self.recorder.mode == "continuous":
             self.recorder.stop()
+        if not on and self.recorder.error.startswith("Continuous recording is paused"):
+            self.recorder.error = ""
         if self.settings.recording.continuous != on:
             self.settings.recording.continuous = on
             save_settings(self.home, self.settings)
@@ -84,11 +105,7 @@ class App:
 
     def stop_capture(self):
         samples = self.recorder.stop()
-        if self.settings.recording.continuous and self.engine.ready():
-            try:
-                self.recorder.start("continuous")
-            except RuntimeError as e:
-                log.warning("continuous recording not resumed: %s", e)
+        self.resume_continuous()
         return samples
 
     # --- language model and summaries --------------------------------------------------
@@ -101,7 +118,7 @@ class App:
         return next((s["name"] for s in self.speakers.speakers if s["is_user"]), self.settings.user_name)
 
     def summarize(self, date: str) -> dict:
-        data = summarize_day(date, self.storage, self.llm(), self.settings, self.owner_name(), self.reminder_store.all())
+        data = summarize_day(date, self.storage, self.llm(), self.settings, self.owner_name(), self.reminder_store.all(), self.speakers.user_ids())
         self.events.emit("day_summarized", date=date, summary=data)
         return data
 
