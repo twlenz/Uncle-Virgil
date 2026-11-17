@@ -34,11 +34,26 @@ microphone are planned but not built.
 
 ## Install on Windows
 
+**Standalone (no Python needed):** open the repository's
+[Actions tab](https://github.com/twlenz/Uncle-Virgil/actions/workflows/tests.yml),
+choose the latest successful run, and download **Uncle-Virgil-windows** under
+Artifacts. Unzip it anywhere and run `Uncle Virgil.exe`. The build is not
+code-signed, so the first time Windows may show "Windows protected your PC";
+choose More info, then Run anyway.
+
+**From source:**
+
 1. Install Python 3.12 or 3.13 from [python.org](https://www.python.org/downloads/windows/).
 2. Download this repository and double-click `start.bat`. The first run
    installs the app into a `.venv` folder next to it, then opens the window.
-3. Follow the **Getting started** list on the Today page: download the speech
-   models (about 500 MB, one time), then record a 20-second voice sample.
+
+Either way, then follow the **Getting started** list on the Today page:
+download the speech models (about 500 MB, one time), then record a
+20-second voice sample.
+
+Press **Ctrl+Alt+D** in any program to start dictating, and again to stop;
+a short sound confirms each press. The shortcut can be changed or turned off
+under Settings > Recording.
 
 To record all day, switch on **Continuous recording**, and under Settings >
 Recording tick "Start Uncle Virgil when I sign in to Windows". The app then
@@ -158,7 +173,7 @@ is [pywebview](https://pywebview.flowrl.com) over a local FastAPI service.
 | `reminders.py`, `notify.py` | Note detection, time parsing, scheduling, channels |
 | `summary.py`, `llm/` | Daily summary and model providers |
 | `storage.py` | The on-disk layout, search, corrections, delete and compress |
-| `autostart.py` | Start with Windows (per-user registry entry) |
+| `autostart.py`, `hotkey.py` | Start with Windows, and the dictation shortcut |
 | `server.py`, `ui/` | Local API and the window's pages |
 
 ## Known limits
@@ -175,8 +190,11 @@ is [pywebview](https://pywebview.flowrl.com) over a local FastAPI service.
   system-tray mode yet.
 - Importing reads FLAC, WAV, Ogg/Opus and MP3. Phone recordings in M4A/AAC
   need [ffmpeg](https://ffmpeg.org) installed.
-- Starting with Windows, the close confirmation, and desktop notifications
-  were written for Windows but have only been tested on Linux so far.
+- Automated tests run on Windows (GitHub Actions) and cover the registry
+  entry for starting with Windows, Credential Manager, the notification
+  system, the dictation shortcut, and opening the real window. What they
+  cannot cover is a real microphone and a person clicking through the
+  window on a real PC.
 
 ## Development
 
@@ -196,4 +214,30 @@ Run the service without the window, for debugging in a browser:
 
 ```bash
 uncle-virgil --no-window
+```
+
+Check an installation (opens the window, checks it reaches the service and
+that the speech engine runs, then exits; the result is also written to
+`uncle-virgil.log`):
+
+```bash
+uncle-virgil --self-test
+```
+
+Download the speech models without opening the window, for example on a
+machine you will move offline:
+
+```bash
+uncle-virgil --download-models
+```
+
+`UNCLE_VIRGIL_MODELS` points several data folders at one shared copy of the
+models. Each model file is checked against a pinned SHA-256 before use, and
+an interrupted download resumes where it stopped.
+
+Build the standalone Windows app yourself (PowerShell, from the repository
+folder):
+
+```
+.\packaging\build-windows.ps1
 ```
