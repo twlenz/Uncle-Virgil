@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from uncle_virgil.summary import summarize_day
@@ -98,6 +100,11 @@ def test_daily_summary_runs_once_after_the_set_time_and_catches_up_yesterday(app
     assert app.check_daily_summary(datetime(2026, 11, 16, 20, 59)) == []
     assert app.check_daily_summary(datetime(2026, 11, 16, 21, 0)) == [D]
     assert app.check_daily_summary(datetime(2026, 11, 16, 21, 1)) == []
+    for _ in range(500):  # the summary is written on a background thread
+        if app.jobs[f"summary:{D}"]["state"] != "running":
+            break
+        time.sleep(0.01)
+    assert app.jobs[f"summary:{D}"]["state"] == "done"
     fresh = type(app)(app.home)  # app restarted the next morning with no summary on disk yet
-    (app.home / "days" / D / "summary.json").unlink(missing_ok=True)
+    (app.home / "days" / D / "summary.json").unlink()
     assert fresh.check_daily_summary(datetime(2026, 11, 17, 8, 0)) == [D]

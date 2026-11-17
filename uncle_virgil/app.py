@@ -146,9 +146,9 @@ class App:
                 continue
             summary = self.storage.load_summary(date)
             # Yesterday needs a summary made after its last recording; today needs one made after the set time.
-            last = max(s["end"] for s in self.storage.load_segments(date))
-            fresh_after = due.astimezone().isoformat() if date == today else last
-            if summary and summary["generated_at"] >= fresh_after:
+            last = max(datetime.fromisoformat(s["end"]) for s in self.storage.load_segments(date))
+            fresh_after = due.astimezone() if date == today else last
+            if summary and datetime.fromisoformat(summary["generated_at"]) >= fresh_after:
                 continue
             self._auto_summarized.add(date)
             if self.run_job(f"summary:{date}", lambda d=date: self.summarize(d) and None):
