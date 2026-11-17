@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import secrets
@@ -37,6 +38,7 @@ def main() -> None:
     parser.add_argument("--no-window", action="store_true", help="run the service without the desktop window")
     parser.add_argument("--minimized", action="store_true", help="open the window minimized (used when starting with Windows)")
     parser.add_argument("--download-models", action="store_true", help="download the speech models, then exit")
+    parser.add_argument("--self-test", action="store_true", help="open the window, check the interface loads and reaches the service, then exit")
     args = parser.parse_args()
 
     if args.download_models:
@@ -79,10 +81,62 @@ def main() -> None:
             window.confirm_close = app.recorder.mode != "idle"
 
         window.events.closing += on_closing
-        webview.start(localization={"global.quitConfirmation": "Uncle Virgil is recording. Closing the window stops recording. Close anyway?"})
+        threading.Thread(target=_show_recording_in_title, args=(window, app), daemon=True, name="title").start()
+        result = [0]
+        webview.start(
+            _self_test if args.self_test else None,
+            (window, result) if args.self_test else None,
+            localization={"global.quitConfirmation": "Uncle Virgil is recording. Closing the window stops recording. Close anyway?"},
+        )
     finally:
         app.stop()
         server.should_exit = True
+    if args.self_test:
+        sys.exit(result[0])
+
+
+TITLES = {"idle": "Uncle Virgil", "continuous": "● Listening · Uncle Virgil", "dictation": "● Dictating · Uncle Virgil", "sample": "● Recording voice sample · Uncle Virgil"}
+
+
+def _show_recording_in_title(window, app) -> None:
+    """Keep the window title, which the taskbar shows, saying whether the microphone is in use."""
+    shown = None
+    while True:
+        title = TITLES.get(app.recorder.mode, TITLES["idle"])
+        if title != shown:
+            try:
+                window.set_title(title)
+                shown = title
+            except Exception:  # the window is not ready yet, or is closing
+                pass
+        time.sleep(0.5)
+
+
+def _self_test(window, result: list) -> None:
+    """Check that the real window loads the interface and that it reaches the service (used in CI on Windows)."""
+    result[0] = 1
+    data = None
+    try:
+        if not window.events.loaded.wait(60):
+            raise RuntimeError("the page did not load within 60 seconds")
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            raw = window.evaluate_js(
+                "JSON.stringify({h1: document.querySelector('h1') && document.querySelector('h1').textContent,"
+                " nav: document.querySelectorAll('#nav button').length,"
+                " mode: typeof state !== 'undefined' && state.status ? state.status.mode : null})"
+            )
+            data = json.loads(raw) if isinstance(raw, str) else raw
+            if data and data.get("h1") == "Today" and data.get("nav") == 7 and data.get("mode"):
+                print(f"Self-test passed: the window shows the interface and it reached the service (recorder {data['mode']}).", flush=True)
+                result[0] = 0
+                return
+            time.sleep(0.5)
+        print(f"Self-test failed: the interface did not finish loading (last state: {data}).", flush=True)
+    except Exception as e:
+        print(f"Self-test failed: {type(e).__name__}: {e}", flush=True)
+    finally:
+        window.destroy()
 
 
 if __name__ == "__main__":
