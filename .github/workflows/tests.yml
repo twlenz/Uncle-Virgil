@@ -54,3 +54,45 @@ jobs:
         if: runner.os == 'Windows'
         timeout-minutes: 5
         run: python -m uncle_virgil --self-test --home ci-home
+
+  build-windows:
+    name: Standalone Windows build
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      UNCLE_VIRGIL_MODELS: ${{ github.workspace }}/ci-models
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Build
+        shell: pwsh
+        run: .\packaging\build-windows.ps1
+
+      - name: Cache speech models
+        uses: actions/cache@v5
+        with:
+          path: ci-models
+          key: speech-models-parakeet-v1
+
+      - name: Run the built app's self-test (window, service, speech engine)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\Uncle Virgil\Uncle Virgil.exe" -ArgumentList "--self-test","--home","ci-home" -Wait -PassThru
+          Get-Content ci-home\uncle-virgil.log | Select-String "Self-test"
+          if ($p.ExitCode -ne 0) { Get-Content ci-home\uncle-virgil.log; throw "self-test failed with exit code $($p.ExitCode)" }
+
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path "dist\Uncle Virgil" -DestinationPath "Uncle-Virgil-windows.zip"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Uncle-Virgil-windows
+          path: Uncle-Virgil-windows.zip
+          retention-days: 30

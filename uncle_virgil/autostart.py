@@ -19,7 +19,9 @@ def supported() -> bool:
 
 
 def command(home: Path) -> str:
-    """The command Windows runs at sign-in: this Python environment, without a console window, minimized."""
+    """The command Windows runs at sign-in: this app, without a console window, minimized."""
+    if getattr(sys, "frozen", False):  # the standalone build: run the .exe itself
+        return f'"{sys.executable}" --minimized --home "{home}"'
     exe = Path(sys.executable)
     pythonw = exe.with_name("pythonw.exe")
     if pythonw.exists():
