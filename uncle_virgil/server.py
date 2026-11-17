@@ -203,7 +203,7 @@ def create_app(app: App, token: str | None = None) -> FastAPI:
 
     @api.get("/api/search")
     def search(q: str):
-        hits = app.storage.search(q)
+        hits = app.storage.search(q, names=[s["name"] for s in app.speakers.speakers])
         for hit in hits:
             hit["has_audio"] = app.storage.audio_file(hit["date"], hit["block"]) is not None
         return hits

@@ -157,14 +157,30 @@ class Storage:
             self.rewrite_segments(date, keep)
             return {"lines": len(segments) - len(keep), "recordings": len(orphaned)}
 
-    def search(self, query: str, limit: int = 200) -> list[dict]:
-        """Lines containing every word of `query` (any case), newest day first."""
+    def search(self, query: str, limit: int = 200, names: list[str] = ()) -> list[dict]:
+        """Lines containing every word of `query` (any case), newest day first.
+
+        `names` are people's current names: a word that is part of a name is matched
+        against who said the line, which older files may record under an earlier name."""
         words = query.lower().split()
         if not words:
             return []
+        lowered_names = [n.lower() for n in names]
+        text_words = [w for w in words if not any(w in n for n in lowered_names)]
         hits = []
         for date in self.list_days():
-            for seg in self.load_segments(date):
+            path = self.day_dir(date) / "segments.jsonl"
+            if not path.exists():
+                continue
+            with self._lock:
+                raw = path.read_text(encoding="utf-8")
+            lowered = raw.lower()
+            if not all(w in lowered for w in text_words):
+                continue  # cheap check on the whole file before reading it line by line
+            for line in raw.splitlines():
+                if not line.strip() or not all(w in line.lower() for w in text_words):
+                    continue
+                seg = json.loads(line)
                 haystack = f"{seg['text']} {self.speaker_name(seg)}".lower()
                 if all(w in haystack for w in words):
                     hits.append({**seg, "date": date, "speaker": self.speaker_name(seg)})

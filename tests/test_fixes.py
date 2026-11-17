@@ -248,3 +248,13 @@ def test_reminders_from_old_recordings_are_not_set_once_their_time_has_passed(ap
     yesterday = (datetime.now().astimezone() - timedelta(days=1)).date().isoformat()
     assert app.reminders.handle_segments([seg(yesterday, "09:00:00", "Note to self, meeting at 5pm.", mode="dictation")]) == []
     assert app.sent == [] and app.reminder_store.all() == []
+
+
+def test_search_by_a_renamed_persons_new_name_still_finds_their_older_lines(client, app):
+    app.speakers.enroll("Ana", [0.0, 1.0])
+    ana = app.speakers.speakers[0]["id"]
+    app.storage.append_segments(D, [seg(D, "10:00:00", "The forecast is ready.", speaker="Ana", speaker_id=ana)])
+    app.speakers.rename(ana, "Ana Lopez")  # the file still says "Ana"
+    hits = client.get("/api/search", params={"q": "lopez forecast"}).json()
+    assert [(h["speaker"], h["text"]) for h in hits] == [("Ana Lopez", "The forecast is ready.")]
+    assert client.get("/api/search", params={"q": "lopez zebra"}).json() == []

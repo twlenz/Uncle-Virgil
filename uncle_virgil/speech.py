@@ -25,6 +25,8 @@ MIN_TURN_S = 0.25
 MIN_CLUSTER_S = 1.5  # a "speaker" heard for less than this in a block is probably a mis-split
 PAD_S = 0.1
 MAX_VOICE_S = 60.0  # audio used for one voiceprint
+VOICE_PIECE_S = 10.0  # ...analyzed this much at a time
+MIN_VOICE_PIECE_S = 1.5
 
 
 @dataclass
@@ -164,14 +166,26 @@ class SpeechEngine:
             return self._embed(samples)
 
     def _embed(self, samples: np.ndarray) -> np.ndarray | None:
-        stream = self._extractor.create_stream()
-        stream.accept_waveform(SAMPLE_RATE, samples[: int(MAX_VOICE_S * SAMPLE_RATE)])
-        stream.input_finished()
-        if not self._extractor.is_ready(stream):
+        """Voiceprint from up to MAX_VOICE_S of speech, taken in VOICE_PIECE_S pieces and averaged.
+
+        One long pass needs several hundred MB more memory for the same result."""
+        piece = int(VOICE_PIECE_S * SAMPLE_RATE)
+        vectors, weights = [], []
+        for start in range(0, min(len(samples), int(MAX_VOICE_S * SAMPLE_RATE)), piece):
+            chunk = samples[start : start + piece]
+            if vectors and len(chunk) < MIN_VOICE_PIECE_S * SAMPLE_RATE:
+                break  # a short tail adds little
+            stream = self._extractor.create_stream()
+            stream.accept_waveform(SAMPLE_RATE, chunk)
+            stream.input_finished()
+            if self._extractor.is_ready(stream):
+                vectors.append(np.asarray(self._extractor.compute(stream), dtype=np.float32))
+                weights.append(len(chunk))
+        if not vectors:
             return None
-        v = np.asarray(self._extractor.compute(stream), dtype=np.float32)
+        v = np.average(vectors, axis=0, weights=weights)
         norm = float(np.linalg.norm(v))
-        return v / norm if norm > 0 else None
+        return (v / norm).astype(np.float32) if norm > 0 else None
 
     def _recognize(self, samples: np.ndarray) -> str:
         stream = self._recognizer.create_stream()
