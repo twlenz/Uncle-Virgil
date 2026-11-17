@@ -20,7 +20,7 @@ dependencies = [
     "httpx",
     "tomli-w",
     "keyring",
-    "pywebview",
+    "pywebview>=5.0",
     "desktop-notifier",
     "anthropic>=1.0",
 ]

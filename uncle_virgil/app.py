@@ -11,7 +11,7 @@ from typing import Callable
 from . import llm
 from .config import get_secret, load_settings, save_settings
 from .events import EventBus, load_plugins
-from .models import ModelManager
+from .models import ModelManager, models_dir
 from .notify import Notifier
 from .pipeline import Pipeline
 from .recorder import Recorder
@@ -30,7 +30,7 @@ class App:
         self.home.mkdir(parents=True, exist_ok=True)
         self.settings = load_settings(self.home)
         self.storage = Storage(self.home)
-        self.models = ModelManager(self.home / "models")
+        self.models = ModelManager(models_dir(self.home))
         self.engine = SpeechEngine(self.models, self.settings.speech)
         self.speakers = SpeakerStore(self.storage, self.settings.speech.speaker_match_threshold)
         self.storage.name_resolver = self.speakers.name_of

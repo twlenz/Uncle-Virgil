@@ -15,9 +15,8 @@ DATA = Path(__file__).parent / "data"
 def app(tmp_path, monkeypatch):
     """A full App on an empty data folder, with notifications captured instead of shown."""
     monkeypatch.setenv("UNCLE_VIRGIL_HOME", str(tmp_path))
-    models = os.environ.get("UNCLE_VIRGIL_TEST_MODELS")
-    if models:
-        (tmp_path / "models").symlink_to(models)
+    # Without UNCLE_VIRGIL_TEST_MODELS, models go in an empty folder, so the speech engine reports "not ready".
+    monkeypatch.setenv("UNCLE_VIRGIL_MODELS", os.environ.get("UNCLE_VIRGIL_TEST_MODELS") or str(tmp_path / "models"))
     a = App(tmp_path)
     a.sent = []
     a.notifier.channels["desktop"] = lambda title, body: a.sent.append((title, body))

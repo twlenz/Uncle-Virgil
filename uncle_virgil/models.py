@@ -8,6 +8,7 @@ pipeline touches the network.
 from __future__ import annotations
 
 import logging
+import os
 import tarfile
 import threading
 from dataclasses import dataclass
@@ -87,6 +88,11 @@ EMBEDDING = Model(
 )
 
 
+def models_dir(home: Path) -> Path:
+    """Where speech models live: <home>/models, or UNCLE_VIRGIL_MODELS to share one copy between data folders."""
+    return Path(os.environ.get("UNCLE_VIRGIL_MODELS") or Path(home) / "models")
+
+
 class ModelManager:
     def __init__(self, models_dir: Path):
         self.dir = Path(models_dir)
@@ -124,6 +130,13 @@ class ModelManager:
             self._thread = threading.Thread(target=self._run, args=(asr_key, on_done), daemon=True, name="model-download")
             self._thread.start()
             return True
+
+    def download_now(self, asr_key: str, report=print) -> None:
+        """Download missing models in the foreground (for the command line), reporting progress."""
+        for model in self.missing(asr_key):
+            report(f"Downloading {model.label} ({model.size_mb} MB)…")
+            self._download(model)
+        report("All speech models are installed.")
 
     def _run(self, asr_key: str, on_done) -> None:
         try:

@@ -1,0 +1,51 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ["3.12", "3.13"]
+        exclude:
+          - os: ubuntu-latest
+            python: "3.12"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      # One shared copy of the speech models, cached between runs.
+      UNCLE_VIRGIL_MODELS: ${{ github.workspace }}/ci-models
+      UNCLE_VIRGIL_TEST_MODELS: ${{ github.workspace }}/ci-models
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Linux audio library
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2
+
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+
+      - name: Cache speech models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: speech-models-parakeet-v1
+
+      - name: Download speech models
+        run: python -m uncle_virgil --download-models --home ci-home
+
+      - name: Test
+        run: python -m pytest -v -rs

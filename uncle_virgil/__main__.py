@@ -36,7 +36,15 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=0, help="port for the local service (default: any free port)")
     parser.add_argument("--no-window", action="store_true", help="run the service without the desktop window")
     parser.add_argument("--minimized", action="store_true", help="open the window minimized (used when starting with Windows)")
+    parser.add_argument("--download-models", action="store_true", help="download the speech models, then exit")
     args = parser.parse_args()
+
+    if args.download_models:
+        from .config import load_settings
+        from .models import ModelManager, models_dir
+
+        ModelManager(models_dir(args.home)).download_now(load_settings(args.home).speech.asr_model)
+        return
 
     args.home.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
@@ -56,7 +64,7 @@ def main() -> None:
 
     try:
         if args.no_window:
-            print(f"Uncle Virgil is running at {url}")
+            print(f"Uncle Virgil is running at {url}", flush=True)
             server.run()
             return
         import webview  # imported late so --no-window works without a GUI toolkit
