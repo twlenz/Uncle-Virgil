@@ -92,11 +92,22 @@ def main() -> None:
         window.events.closing += on_closing
         threading.Thread(target=_show_recording_in_title, args=(window, app), daemon=True, name="title").start()
         result = [0]
-        webview.start(
-            _self_test if args.self_test else None,
-            (window, app, result) if args.self_test else None,
-            localization={"global.quitConfirmation": "Uncle Virgil is recording. Closing the window stops recording. Close anyway?"},
-        )
+        try:
+            webview.start(
+                _self_test if args.self_test else None,
+                (window, app, result) if args.self_test else None,
+                localization={"global.quitConfirmation": "Uncle Virgil is recording. Closing the window stops recording. Close anyway?"},
+            )
+        except Exception as e:
+            logging.getLogger("uncle_virgil").exception("the window could not be opened")
+            result[0] = 1
+            if not args.self_test:  # a test machine has nobody to click OK
+                instance.show_error(
+                    "Uncle Virgil could not open its window",
+                    f"{type(e).__name__}: {e}\n\nThe details are in {args.home / 'uncle-virgil.log'}.",
+                )
+            if not args.self_test:
+                sys.exit(1)
     finally:
         app.stop()
         server.should_exit = True

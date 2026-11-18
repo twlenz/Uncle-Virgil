@@ -48,6 +48,15 @@ def tell_already_running(show_box: bool) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
+def show_error(title: str, message: str) -> None:
+    """A plain error box (Windows), for problems that happen before or instead of the window opening."""
+    print(f"{title}: {message}", file=sys.stderr, flush=True)
+    if sys.platform == "win32":
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, message, title, 0x10)  # error icon
+
+
 def lower_priority() -> None:
     """Run below normal priority, so transcription never slows down what you are doing.
 

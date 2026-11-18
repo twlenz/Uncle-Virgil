@@ -87,6 +87,16 @@ jobs:
           Get-Content ci-home\uncle-virgil.log | Select-String "Self-test"
           if ($p.ExitCode -ne 0) { Get-Content ci-home\uncle-virgil.log; throw "self-test failed with exit code $($p.ExitCode)" }
 
+      - name: Self-test a copy marked as downloaded from the internet, as unzipping a download does
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse "dist\Uncle Virgil" "downloaded\Uncle Virgil"
+          Get-ChildItem -Recurse -File "downloaded" | ForEach-Object { Set-Content -Path $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3" }
+          $p = Start-Process -FilePath "downloaded\Uncle Virgil\Uncle Virgil.exe" -ArgumentList "--self-test","--home","ci-home-downloaded" -PassThru
+          if (-not $p.WaitForExit(180000)) { Stop-Process -Id $p.Id -Force; throw "the downloaded copy did not finish its self-test (a dialog may be waiting)" }
+          Get-Content ci-home-downloaded\uncle-virgil.log -ErrorAction SilentlyContinue | Select-String "Self-test|ERROR|Error|Failed"
+          if ($p.ExitCode -ne 0) { Get-Content ci-home-downloaded\uncle-virgil.log -ErrorAction SilentlyContinue; throw "self-test of the downloaded copy failed with exit code $($p.ExitCode)" }
+
       - name: Package
         shell: pwsh
         run: Compress-Archive -Path "dist\Uncle Virgil" -DestinationPath "Uncle-Virgil-windows.zip"
