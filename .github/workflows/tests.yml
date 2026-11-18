@@ -94,8 +94,10 @@ jobs:
           Write-Host "$(Get-Date -Format T) copying"
           New-Item -ItemType Directory -Force downloaded | Out-Null
           Copy-Item -Recurse "dist\Uncle Virgil" "downloaded\"
-          $files = Get-ChildItem -Recurse -File "downloaded" -Include *.dll,*.exe
-          Write-Host "$(Get-Date -Format T) marking $($files.Count) DLL and EXE files"
+          # Mark the DLLs as a download does. Not the .exe: Windows would then hold it at the "Open File -
+          # Security Warning" prompt, which a person clicks through (and the reported failure came after it).
+          $files = Get-ChildItem -Recurse -File "downloaded" -Include *.dll
+          Write-Host "$(Get-Date -Format T) marking $($files.Count) DLL files"
           foreach ($f in $files) { Set-Content -LiteralPath $f.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3" }
           Write-Host "$(Get-Date -Format T) Python.Runtime.dll marked: $([bool](Get-Item -LiteralPath 'downloaded\Uncle Virgil\_internal\pythonnet\runtime\Python.Runtime.dll' -Stream Zone.Identifier -ErrorAction SilentlyContinue))"
           $p = Start-Process -FilePath "downloaded\Uncle Virgil\Uncle Virgil.exe" -ArgumentList "--self-test","--home","ci-home-downloaded" -PassThru
