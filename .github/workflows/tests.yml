@@ -89,12 +89,20 @@ jobs:
 
       - name: Self-test a copy marked as downloaded from the internet, as unzipping a download does
         shell: pwsh
+        timeout-minutes: 10
         run: |
-          Copy-Item -Recurse "dist\Uncle Virgil" "downloaded\Uncle Virgil"
-          Get-ChildItem -Recurse -File "downloaded" | ForEach-Object { Set-Content -Path $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3" }
+          Write-Host "$(Get-Date -Format T) copying"
+          New-Item -ItemType Directory -Force downloaded | Out-Null
+          Copy-Item -Recurse "dist\Uncle Virgil" "downloaded\"
+          $files = Get-ChildItem -Recurse -File "downloaded" -Include *.dll,*.exe
+          Write-Host "$(Get-Date -Format T) marking $($files.Count) DLL and EXE files"
+          foreach ($f in $files) { Set-Content -LiteralPath $f.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3" }
+          Write-Host "$(Get-Date -Format T) Python.Runtime.dll marked: $([bool](Get-Item -LiteralPath 'downloaded\Uncle Virgil\_internal\pythonnet\runtime\Python.Runtime.dll' -Stream Zone.Identifier -ErrorAction SilentlyContinue))"
           $p = Start-Process -FilePath "downloaded\Uncle Virgil\Uncle Virgil.exe" -ArgumentList "--self-test","--home","ci-home-downloaded" -PassThru
-          if (-not $p.WaitForExit(180000)) { Stop-Process -Id $p.Id -Force; throw "the downloaded copy did not finish its self-test (a dialog may be waiting)" }
-          Get-Content ci-home-downloaded\uncle-virgil.log -ErrorAction SilentlyContinue | Select-String "Self-test|ERROR|Error|Failed"
+          Write-Host "$(Get-Date -Format T) started the app"
+          if (-not $p.WaitForExit(180000)) { Stop-Process -Id $p.Id -Force; throw "the downloaded copy did not finish its self-test within 3 minutes" }
+          Write-Host "$(Get-Date -Format T) app exited with code $($p.ExitCode)"
+          Get-Content ci-home-downloaded\uncle-virgil.log -ErrorAction SilentlyContinue | Select-String "Self-test|ERROR|Failed"
           if ($p.ExitCode -ne 0) { Get-Content ci-home-downloaded\uncle-virgil.log -ErrorAction SilentlyContinue; throw "self-test of the downloaded copy failed with exit code $($p.ExitCode)" }
 
       - name: Package
