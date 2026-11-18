@@ -102,11 +102,16 @@ def main() -> None:
             logging.getLogger("uncle_virgil").exception("the window could not be opened")
             result[0] = 1
             if not args.self_test:  # a test machine has nobody to click OK
+                hint = ""
+                if "Python.Runtime" in str(e):
+                    hint = (
+                        "\n\nWindows blocked part of the app because it came from a download. Right-click the zip file you "
+                        "downloaded, choose Properties, tick Unblock, click OK, then unzip it again."
+                    )
                 instance.show_error(
                     "Uncle Virgil could not open its window",
-                    f"{type(e).__name__}: {e}\n\nThe details are in {args.home / 'uncle-virgil.log'}.",
+                    f"{type(e).__name__}: {e}{hint}\n\nThe details are in {args.home / 'uncle-virgil.log'}.",
                 )
-            if not args.self_test:
                 sys.exit(1)
     finally:
         app.stop()

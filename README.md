@@ -39,7 +39,11 @@ microphone are planned but not built.
 choose the latest successful run, and download **Uncle-Virgil-windows** under
 Artifacts. Unzip it anywhere and run `Uncle Virgil.exe`. The build is not
 code-signed, so the first time Windows may show "Windows protected your PC";
-choose More info, then Run anyway.
+choose More info, then Run anyway. Windows also marks every file unzipped
+from a download; the app removes that mark from its own files when it
+starts. If the window still does not open and the error mentions
+`Python.Runtime`, right-click the downloaded zip, choose Properties, tick
+Unblock, click OK, and unzip it again.
 
 **From source:**
 
