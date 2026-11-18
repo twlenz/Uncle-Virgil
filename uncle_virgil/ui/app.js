@@ -171,7 +171,7 @@ async function pollStatus() {
 
 function renderBanners(s) {
   const m = s.models;
-  const key = JSON.stringify([m.progress.active, m.progress.error, m.ready, s.pipeline_error, s.alerts.map((r) => r.id), s.heard.map((r) => [r.id, r.due, r.text])]);
+  const key = JSON.stringify([s.disk_low, s.disk_low && s.disk_free_gb, s.damaged_files, m.progress.active, m.progress.error, m.ready, s.pipeline_error, s.alerts.map((r) => r.id), s.heard.map((r) => [r.id, r.due, r.text])]);
   if (key === renderBanners.key) {
     if (m.progress.active) {
       $("banners").querySelector("progress").value = m.progress.done_mb;
@@ -190,6 +190,11 @@ function renderBanners(s) {
       el("span", { class: "grow" }, m.progress.error ? `The model download failed: ${m.progress.error}` : `The speech models are not installed yet (a one-time download of about ${size} MB). Anything you record is kept and transcribed once they are.`),
       el("button", { class: "btn primary", onclick: (e) => act(e.target, () => api("/models/download", { method: "POST" })) }, m.progress.error ? "Try again" : "Download models")));
   }
+  if (s.disk_low) out.push(el("div", { class: "banner error" }, el("span", { class: "grow" },
+    `Low disk space: ${s.disk_free_gb} GB free on the drive that holds your recordings. Recording stops below 1 GB, so the drive never fills up.`),
+    el("button", { class: "btn", onclick: () => go("storage") }, "Free up space")));
+  if (s.damaged_files.length) out.push(el("div", { class: "banner error" }, el("span", { class: "grow" },
+    `Some files could not be read and were kept aside under a new name, so nothing was lost: ${s.damaged_files.join("; ")}. The app carried on without them.`)));
   if (s.pipeline_error) out.push(el("div", { class: "banner error" }, el("span", { class: "grow" }, "A recording could not be transcribed: " + s.pipeline_error)));
   for (const r of s.heard) {
     out.push(el("div", { class: "banner info" }, el("span", { class: "grow" }, el("strong", {}, "Reminder set: "), `${r.text}, ${dueText(r.due)}`),
@@ -266,6 +271,8 @@ async function renderDay(date) {
   const waiting = day.untranscribed > 0 && el("p", { class: "note waiting" },
     `${plural(day.untranscribed, "recording")} from this day ${day.untranscribed === 1 ? "is" : "are"} waiting to be transcribed` +
     (state.status?.models.ready ? ". This happens in the background." : ". Transcription starts once the speech models are downloaded."));
+  const noSpeech = day.no_speech > 0 && el("p", { class: "note waiting" },
+    `${plural(day.no_speech, "recording")} from this day had no words the recognizer could make out (for example background noise or very quiet speech). The audio is kept in this day's folder under audio\\no-speech.`);
   const tabs = el("div", { class: "tabs", role: "tablist" }, ["summary", "transcript"].map((t) =>
     el("button", { class: t === tab ? "active" : "", role: "tab", onclick: () => { state.tab = t; render(); } }, t === "summary" ? "Summary" : "Transcript")));
   const empty = state.view === "today"
@@ -273,7 +280,7 @@ async function renderDay(date) {
     : el("p", { class: "muted" }, "Nothing was transcribed on this day.");
   const body = !hasText ? empty : tab === "summary" ? summaryPanel(day) : transcriptPanel(day);
   if (day.job?.state === "running") setTimeout(() => { if (viewedDate() === date && DAY_VIEWS.includes(state.view)) render(); }, 2000);
-  return [head, state.view === "today" && el("div", { id: "setup" }), waiting, tabs, body];
+  return [head, state.view === "today" && el("div", { id: "setup" }), waiting, noSpeech, tabs, body];
 }
 
 function importDialog(file) {

@@ -69,7 +69,9 @@ def test_short_dictation_is_attributed_to_the_owner_and_silence_is_discarded(app
     assert app.pipeline.wait_idle()
     segments = app.storage.load_segments(D)
     assert len(segments) == 1 and segments[0]["speaker"] == "Tom" and segments[0]["mode"] == "dictation"
-    assert [b for b, _ in app.storage.audio_blocks(D)] == ["14-00-00"]  # the silent block's audio was removed
+    assert [b for b, _ in app.storage.audio_blocks(D)] == ["14-00-00"]
+    assert [b for b, _ in app.storage.no_speech_blocks(D)] == ["14-05-00"]  # the silent block is kept aside, not deleted
+    assert app.pipeline.recover() == 0  # and is not transcribed again at the next start
 
 
 def test_importing_a_recording_file_goes_through_the_same_pipeline(app):

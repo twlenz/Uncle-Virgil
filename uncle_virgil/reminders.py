@@ -20,6 +20,8 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from . import files
+
 log = logging.getLogger(__name__)
 
 # --- finding notes -----------------------------------------------------------------
@@ -170,12 +172,10 @@ class ReminderStore:
         self._lock = threading.RLock()
         self.items: list[dict] = []
         if self.path.exists():
-            self.items = json.loads(self.path.read_text(encoding="utf-8"))
+            self.items = files.load_json(self.path, [])
 
     def _save(self) -> None:
-        tmp = self.path.with_name("reminders.json.tmp")
-        tmp.write_text(json.dumps(self.items, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(self.path)
+        files.atomic_write(self.path, json.dumps(self.items, indent=2, ensure_ascii=False))
 
     def all(self) -> list[dict]:
         with self._lock:

@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 import threading
 from datetime import date as Date
@@ -20,9 +22,12 @@ from typing import Callable, Iterator
 
 import numpy as np
 
-from . import audio
+from . import audio, files
+
+log = logging.getLogger(__name__)
 
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+NO_SPEECH = "no-speech"  # recordings in which no words were recognized; kept, not transcribed again
 _BLOCK_RE = re.compile(r"^(\d{2})-(\d{2})-(\d{2})(?:-\d+)?$")
 
 
@@ -102,6 +107,23 @@ class Storage:
         h, m, s = (int(x) for x in _BLOCK_RE.match(block).groups())
         return datetime.fromisoformat(date).replace(hour=h, minute=m, second=s)
 
+    def set_aside_block(self, date: str, block: str) -> None:
+        """Move a recording in which no words were recognized out of the way, keeping it.
+
+        Recordings are never deleted automatically: the recognizer can miss very quiet
+        or distant speech, and the audio may still matter to you."""
+        path = self.audio_file(date, block)
+        if path:
+            folder = path.parent / NO_SPEECH
+            folder.mkdir(exist_ok=True)
+            files.replace_with_retry(path, folder / path.name)
+
+    def no_speech_blocks(self, date: str) -> list[tuple[str, Path]]:
+        folder = self.day_dir(date) / "audio" / NO_SPEECH
+        if not folder.is_dir():
+            return []
+        return sorted((p.stem, p) for p in folder.iterdir() if p.suffix in audio.AUDIO_EXTENSIONS and _BLOCK_RE.match(p.stem))
+
     def delete_block_audio(self, date: str, block: str) -> None:
         path = self.audio_file(date, block)
         if path:
@@ -114,8 +136,17 @@ class Storage:
         with self._lock:
             if not path.exists():
                 return []
-            lines = path.read_text(encoding="utf-8").splitlines()
-        return [json.loads(line) for line in lines if line.strip()]
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        segments = []
+        for number, line in enumerate(lines, 1):
+            if not line.strip():
+                continue
+            try:
+                segments.append(json.loads(line))
+            except json.JSONDecodeError:
+                # e.g. the last line was cut short by a power cut; the other lines are still good
+                log.warning("skipping unreadable line %d of %s", number, path)
+        return segments
 
     def append_segments(self, date: str, segments: list[dict]) -> None:
         if not segments:
@@ -123,9 +154,16 @@ class Storage:
         folder = self.day_dir(date)
         folder.mkdir(parents=True, exist_ok=True)
         with self._lock:
-            with (folder / "segments.jsonl").open("a", encoding="utf-8") as f:
+            path = folder / "segments.jsonl"
+            # If an earlier write was cut short, start on a fresh line so the new lines stay readable.
+            needs_newline = path.exists() and path.stat().st_size > 0 and _last_byte(path) != b"\n"
+            with path.open("a", encoding="utf-8") as f:
+                if needs_newline:
+                    f.write("\n")
                 for seg in segments:
                     f.write(json.dumps(seg, ensure_ascii=False) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
             self.render_transcript(date)
 
     def rewrite_segments(self, date: str, segments: list[dict]) -> None:
@@ -180,7 +218,10 @@ class Storage:
             for line in raw.splitlines():
                 if not line.strip() or not all(w in line.lower() for w in text_words):
                     continue
-                seg = json.loads(line)
+                try:
+                    seg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
                 haystack = f"{seg['text']} {self.speaker_name(seg)}".lower()
                 if all(w in haystack for w in words):
                     hits.append({**seg, "date": date, "speaker": self.speaker_name(seg)})
@@ -213,7 +254,7 @@ class Storage:
     def load_summary(self, date: str) -> dict | None:
         path = self.day_dir(date) / "summary.json"
         with self._lock:
-            return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+            return files.load_json(path, None)
 
     def save_summary(self, date: str, data: dict, markdown: str) -> None:
         folder = self.day_dir(date)
@@ -230,7 +271,7 @@ class Storage:
         day = start.date()
         while day <= end.date():
             date = day.isoformat()
-            for block, path in self.audio_blocks(date):
+            for block, path in self.audio_blocks(date) + self.no_speech_blocks(date):
                 if start <= self.block_start(date, block) <= end:
                     yield date, block, path
             day += timedelta(days=1)
@@ -267,7 +308,7 @@ class Storage:
                 tmp.unlink(missing_ok=True)
                 raise RuntimeError(f"Compressing {path.name} produced a file of the wrong length; original kept")
             result["bytes_before"] += path.stat().st_size
-            tmp.replace(target)
+            files.replace_with_retry(tmp, target)
             path.unlink()
             result["bytes_after"] += target.stat().st_size
             result["files"] += 1
@@ -279,6 +320,10 @@ class Storage:
 
     @staticmethod
     def _write(path: Path, text: str) -> None:
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(text, encoding="utf-8")
-        tmp.replace(path)
+        files.atomic_write(path, text)
+
+
+def _last_byte(path: Path) -> bytes:
+    with path.open("rb") as f:
+        f.seek(-1, os.SEEK_END)
+        return f.read(1)

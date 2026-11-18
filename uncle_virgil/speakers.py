@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import files
 from .storage import Storage
 
 UNKNOWN_MATCH = 0.5  # similarity needed to reuse a same-day "Speaker N" label
@@ -36,7 +37,7 @@ class SpeakerStore:
         self._lock = threading.RLock()
         self.speakers: list[dict] = []
         if self.path.exists():
-            self.speakers = json.loads(self.path.read_text(encoding="utf-8"))["speakers"]
+            self.speakers = files.load_json(self.path, {"speakers": []}).get("speakers", [])
 
     # --- enrolled speakers -------------------------------------------------------
 
@@ -102,7 +103,7 @@ class SpeakerStore:
 
     def _load_unknowns(self, date: str) -> list[dict]:
         path = self._unknowns_path(date)
-        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+        return files.load_json(path, [])
 
     def resolve(self, date: str, embedding: np.ndarray | None, seconds: float) -> tuple[str, str]:
         """Map a voiceprint heard on `date` to (speaker_id, display name)."""

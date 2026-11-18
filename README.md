@@ -89,6 +89,41 @@ Voiceprints of people you name are stored in `speakers.json`. Voiceprints of
 unnamed speakers are kept only in that day's folder and are never matched
 across days. Recording other people is subject to the law where you are.
 
+## Safety: what it does to your computer
+
+- **Files**: the app writes only inside its own data folder (below) and, for
+  the source install, the `.venv` folder next to `start.bat`. It never deletes
+  anything automatically. Deleting happens only when you choose it (delete
+  audio in a date range, delete a conversation or line, forget a voice), each
+  after a confirmation. A recording in which no words were recognized is kept
+  in that day's `audio\no-speech` folder.
+- **Crashes and power cuts**: every save goes to a temporary file that is
+  flushed to disk before it replaces the old one, so a file is never left
+  half-written. If a file is damaged anyway, it is kept under a
+  `.damaged-<date>` name and the app carries on; it is never thrown away. At
+  most the last few minutes of audio not yet saved can be lost.
+- **One copy at a time**: a second copy of the app on the same data folder
+  refuses to start, so two copies never record or write at once.
+- **Disk space**: a warning appears below 5 GB free; recording stops below
+  1 GB free and resumes once space is freed, so the drive never fills up.
+- **Processor and memory**: transcription runs at below-normal priority on at
+  most half the processor cores, so other programs come first. The app uses
+  about 1 to 1.5 GB of memory while running (the speech models). On a
+  computer with 8 GB or less, choosing the Whisper tiny or base model in
+  Settings uses less.
+- **Network**: the app's internal service accepts connections only from this
+  computer, and only with a key that changes at every start. It contacts the
+  internet only for the uses listed under Privacy above.
+- **System settings**: the only change outside the data folder is optional:
+  "Start with Windows" adds one entry named "Uncle Virgil" to your user's
+  startup list (no administrator rights; turning it off removes it). API keys
+  you save go to Windows Credential Manager under "uncle-virgil".
+
+To remove the app completely: turn off "Start with Windows" in Settings,
+close the app, then delete the app folder and the data folder. Saved keys
+can be removed in Windows Credential Manager (entries named
+"uncle-virgil").
+
 ## Where your data lives
 
 Everything is under `C:\Users\<you>\UncleVirgil` (change it with the

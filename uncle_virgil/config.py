@@ -12,6 +12,8 @@ from pathlib import Path
 
 import tomli_w
 
+from . import files
+
 log = logging.getLogger(__name__)
 
 
@@ -138,16 +140,15 @@ def load_settings(home: Path) -> Settings:
     if path.exists():
         try:
             settings.update(tomllib.loads(path.read_text(encoding="utf-8")))
-        except (tomllib.TOMLDecodeError, OSError) as e:
-            log.error("Could not read %s (%s); using defaults", path, e)
+        except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+            # Keep the damaged file, so saving the defaults never overwrites the user's only copy.
+            files.set_aside_damaged(path, e)
     return settings
 
 
 def save_settings(home: Path, settings: Settings) -> None:
     home.mkdir(parents=True, exist_ok=True)
-    tmp = home / "config.toml.tmp"
-    tmp.write_text(tomli_w.dumps(settings.to_dict()), encoding="utf-8")
-    tmp.replace(home / "config.toml")
+    files.atomic_write(home / "config.toml", tomli_w.dumps(settings.to_dict()))
 
 
 # --- secrets -----------------------------------------------------------------

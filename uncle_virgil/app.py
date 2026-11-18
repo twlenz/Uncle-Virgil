@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -22,6 +23,11 @@ from .storage import Storage
 from .summary import summarize_day
 
 log = logging.getLogger(__name__)
+
+DISK_STOP_BYTES = 1_000_000_000  # recording stops below 1 GB free
+DISK_RESUME_BYTES = 1_500_000_000
+DISK_WARN_BYTES = 5_000_000_000
+DISK_FULL_MESSAGE = "Recording stopped: only {:.1f} GB free on the drive. Free up space, or compress or delete old audio under Storage."
 
 
 class App:
@@ -77,11 +83,38 @@ class App:
         self.resume_continuous()
 
     def _health_loop(self) -> None:
+        ticks = 0
         while not self._stop.wait(2):
             try:
                 self.recorder.check_microphone()
+                if ticks % 15 == 0:  # every 30 seconds
+                    self.check_disk()
             except Exception:
-                log.exception("microphone check failed")
+                log.exception("health check failed")
+            ticks += 1
+
+    # --- disk space ----------------------------------------------------------------------
+
+    def disk_free(self) -> int:
+        return shutil.disk_usage(self.home).free
+
+    def check_disk(self) -> None:
+        """Stop recording before the drive fills up (a full system drive makes Windows itself misbehave),
+        and resume continuous recording once there is room again."""
+        free = self.disk_free()
+        if free < DISK_STOP_BYTES and self.recorder.mode in ("continuous", "dictation"):
+            self.recorder.stop()  # saves what was already recorded
+            self.recorder.error = DISK_FULL_MESSAGE.format(free / 1e9)
+            self.notifier.send("Uncle Virgil stopped recording", DISK_FULL_MESSAGE.format(free / 1e9), ["desktop"])
+            log.warning("recording stopped: %.2f GB free", free / 1e9)
+        elif free >= DISK_RESUME_BYTES and self.recorder.error.startswith("Recording stopped: only"):
+            self.recorder.error = ""
+            self.resume_continuous()
+
+    def _require_disk_space(self) -> None:
+        free = self.disk_free()
+        if free < DISK_STOP_BYTES:
+            raise RuntimeError(DISK_FULL_MESSAGE.format(free / 1e9))
 
     def stop(self) -> None:
         self._stop.set()
@@ -96,6 +129,8 @@ class App:
     def set_continuous(self, on: bool) -> None:
         if on and not self.engine.ready():
             raise RuntimeError("Download the speech models first (Settings > Speech models).")
+        if on:
+            self._require_disk_space()
         if on and self.recorder.mode == "idle":
             self.recorder.start("continuous")
         elif not on and self.recorder.mode == "continuous":
@@ -108,6 +143,7 @@ class App:
 
     def start_capture(self, mode: str) -> None:
         """Start a dictation or a voice sample; pauses continuous recording meanwhile."""
+        self._require_disk_space()
         self.recorder.start(mode)
 
     def stop_capture(self):

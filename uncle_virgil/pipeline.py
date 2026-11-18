@@ -2,7 +2,8 @@
 
 Audio is written to disk before anything else, so a crash never loses a
 recording. A block with audio but no transcript is picked up again at the
-next start. Blocks in which no speech is found are deleted.
+next start. A block in which no words are recognized is moved to the
+day's audio/no-speech folder: kept, but not transcribed again.
 """
 
 from __future__ import annotations
@@ -98,7 +99,7 @@ class Pipeline:
             return []  # deleted meanwhile, or already transcribed
         result = app.engine.transcribe(audio.read_audio(path), assume_speech=mode == "dictation")
         if not result.turns:
-            app.storage.delete_block_audio(date, block)  # no speech: nothing worth keeping
+            app.storage.set_aside_block(date, block)  # kept in audio/no-speech, never deleted automatically
             return []
 
         # Resolve in order of first appearance, so new voices are numbered Speaker 1, 2, ... as they speak.

@@ -11,10 +11,12 @@ import socket
 import sys
 import threading
 import time
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import uvicorn
 
+from . import instance
 from .app import App
 from .config import default_home
 from .server import create_app
@@ -28,6 +30,7 @@ def _free_port() -> int:
 
 def main() -> None:
     # Started without a console (pythonw.exe), Python has no output streams; give it harmless ones.
+    no_console = sys.stdout is None
     for name in ("stdout", "stderr"):
         if getattr(sys, name) is None:
             setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
@@ -41,6 +44,12 @@ def main() -> None:
     parser.add_argument("--self-test", action="store_true", help="open the window, check the interface loads and reaches the service, then exit")
     args = parser.parse_args()
 
+    args.home.mkdir(parents=True, exist_ok=True)
+    if not instance.acquire(args.home):
+        instance.tell_already_running(show_box=no_console)
+        sys.exit(1)
+    instance.lower_priority()
+
     if args.download_models:
         from .config import load_settings
         from .models import ModelManager, models_dir
@@ -48,11 +57,11 @@ def main() -> None:
         ModelManager(models_dir(args.home)).download_now(load_settings(args.home).speech.asr_model)
         return
 
-    args.home.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        handlers=[logging.FileHandler(args.home / "uncle-virgil.log", encoding="utf-8"), logging.StreamHandler()],
+        # At most 4 x 5 MB of log, however long the app runs.
+        handlers=[RotatingFileHandler(args.home / "uncle-virgil.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8"), logging.StreamHandler()],
     )
 
     logging.getLogger("httpx").setLevel(logging.WARNING)  # it logs every request URL at INFO

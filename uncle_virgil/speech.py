@@ -125,7 +125,8 @@ class SpeechEngine:
         return self.settings.asr_model in ASR_MODELS and not self.manager.missing(self.settings.asr_model)
 
     def _threads(self) -> int:
-        return self.settings.threads or min(4, os.cpu_count() or 2)
+        # Half the processor cores (at most 4), so transcription always leaves room for everything else.
+        return self.settings.threads or max(1, min(4, (os.cpu_count() or 2) // 2))
 
     def new_vad(self, threshold: float) -> SileroVad:
         return SileroVad(str(self.manager.path(VAD.check)), threshold)

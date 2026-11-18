@@ -9,18 +9,20 @@ from __future__ import annotations
 
 import os
 import secrets
+import shutil
 import subprocess
 import sys
 import tempfile
 from datetime import datetime, time, timedelta
 from pathlib import Path
 
+import numpy as np
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, audio, autostart, hotkey, llm
-from .app import App
+from . import __version__, audio, autostart, files, hotkey, llm
+from .app import DISK_WARN_BYTES, App
 from .config import SECRET_NAMES, get_secret, set_secret
 from .llm import LLMError
 from .models import ASR_MODELS
@@ -53,8 +55,9 @@ def _parse_range(start: str, end: str) -> tuple[datetime, datetime]:
     return a, b
 
 
-def import_audio(app: App, samples, start: datetime) -> int:
-    """Run a recording through the same speech-gated block cutting as live audio. Returns blocks queued."""
+def import_audio(app: App, pieces, start: datetime) -> int:
+    """Run a recording, given as consecutive pieces of audio, through the same speech-gated block
+    cutting as live audio. Returns the number of blocks queued for transcription."""
     count = 0
 
     def on_block(block, at):
@@ -63,8 +66,15 @@ def import_audio(app: App, samples, start: datetime) -> int:
         app.pipeline.submit(block, at, "import")
 
     segmenter = BlockSegmenter(app.engine.new_vad(app.settings.recording.vad_threshold), app.settings.recording, on_block)
-    for i in range(0, len(samples) - FRAME + 1, FRAME):
-        segmenter.feed(samples[i : i + FRAME], start + timedelta(seconds=(i + FRAME) / audio.SAMPLE_RATE))
+    pending = np.zeros(0, dtype=np.float32)
+    position = 0  # samples fed so far
+    for piece in pieces:
+        data = np.concatenate([pending, piece])
+        usable = len(data) - len(data) % FRAME
+        for i in range(0, usable, FRAME):
+            position += FRAME
+            segmenter.feed(data[i : i + FRAME], start + timedelta(seconds=position / audio.SAMPLE_RATE))
+        pending = data[usable:]
     segmenter.close()
     return count
 
@@ -119,6 +129,9 @@ def create_app(app: App, token: str | None = None) -> FastAPI:
             "heard": [r for r in app.reminder_store.all() if _newly_heard(r)],
             "owner_enrolled": bool(app.speakers.user_ids()),
             "has_reminders": bool(app.reminder_store.items),
+            "disk_free_gb": round(app.disk_free() / 1e9, 1),
+            "disk_low": app.disk_free() < DISK_WARN_BYTES,
+            "damaged_files": files.set_aside,
             "hotkey": app.settings.recording.hotkey if app.hotkey else "",
             "llm_provider": app.settings.llm.provider,
             "setup_dismissed": app.settings.setup_dismissed,
@@ -145,18 +158,21 @@ def create_app(app: App, token: str | None = None) -> FastAPI:
         if not app.engine.ready():
             raise HTTPException(400, "Download the speech models first (Settings > Speech models).")
         with tempfile.TemporaryDirectory() as tmp:
+            # Copied to disk and read back in pieces, so a long recording never has to fit in memory.
             path = Path(tmp) / ("upload" + Path(file.filename or "").suffix.lower())
-            path.write_bytes(file.file.read())
-            samples = audio.read_audio(path)
-        length = timedelta(seconds=len(samples) / audio.SAMPLE_RATE)
-        try:
-            if started:
-                start = datetime.fromisoformat(started).astimezone()
-            else:
-                start = (datetime.fromisoformat(ended).astimezone() if ended else datetime.now().astimezone()) - length
-        except ValueError as e:
-            raise HTTPException(400, "Choose when the recording was made") from e
-        return {"blocks": import_audio(app, samples, start), "seconds": length.total_seconds(), "date": start.date().isoformat()}
+            with path.open("wb") as f:
+                shutil.copyfileobj(file.file, f, 1 << 20)
+            seconds, pieces = audio.open_stream(path, Path(tmp))
+            length = timedelta(seconds=seconds)
+            try:
+                if started:
+                    start = datetime.fromisoformat(started).astimezone()
+                else:
+                    start = (datetime.fromisoformat(ended).astimezone() if ended else datetime.now().astimezone()) - length
+            except ValueError as e:
+                raise HTTPException(400, "Choose when the recording was made") from e
+            blocks = import_audio(app, pieces, start)
+        return {"blocks": blocks, "seconds": seconds, "date": start.date().isoformat()}
 
     # --- days ------------------------------------------------------------------------------
 
@@ -180,6 +196,7 @@ def create_app(app: App, token: str | None = None) -> FastAPI:
             "llm": app.settings.llm.provider,
             "speakers": app.speakers.choices(date),
             "untranscribed": app.pipeline.untranscribed(date),
+            "no_speech": len(app.storage.no_speech_blocks(date)),
         }
 
     @api.patch("/api/days/{date}/segments/{segment_id}")
